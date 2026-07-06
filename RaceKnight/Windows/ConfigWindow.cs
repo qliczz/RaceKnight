@@ -37,12 +37,29 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Checkbox("若已安装 Penumbra，Replace 用其 IPC 重绘（更稳）", ref preferPenumbra);
         cfg.PreferPenumbraRedraw = preferPenumbra;
 
-        ImGui.TextWrapped("插件本身不依赖任何外部插件。Hide 通过改写渲染标志位实现（无需签名）；Replace 在装有 Penumbra 时借其 IPC 重绘，否则需补全原生重载函数签名（见 DrawHookIntervention.RedrawSig）。");
+        if (ImGui.CollapsingHeader("三、原生重绘（不装 Penumbra 时刷新外观）", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            var enableNative = cfg.EnableNativeRedraw;
+            ImGui.Checkbox("启用原生重载（未装 Penumbra 时 Replace 才尝试刷新）", ref enableNative);
+            cfg.EnableNativeRedraw = enableNative;
+
+            ImGui.TextWrapped("将“模型重载函数”的字节特征码粘贴到下方（SigScanner 格式，例如 E8 ?? ?? ?? ?? 48 8B D3 ...）。" +
+                              "该签名随游戏版本 / 客户端变化；留空或填错时未装 Penumbra 的 Replace 仅改写字节、外观可能不刷新（不会崩溃）。" +
+                              "获取方式：从同样需要重绘的开源插件（Penumbra / Glamourer）当前源码复制其对应版本的 redraw 签名，" +
+                              "或自行在 IDA/Ghidra 中对 ffxiv_dx11.exe 定位“角色模型重载”函数生成特征码。");
+
+            var sig = cfg.RedrawSignature ?? "";
+            if (InputText("Redraw 签名", ref sig, 256))
+                cfg.RedrawSignature = sig;
+        }
+
+        ImGui.TextWrapped("插件本身不依赖任何外部插件。Hide 通过改写渲染标志位实现（无需签名）；Replace 在装有 Penumbra 时借其 IPC 重绘，否则需在上方填写当前版本的 Redraw 签名。");
 
         ImGui.Separator();
         if (ImGui.Button("保存配置"))
         {
             cfg.Save();
+            plugin.ReloadNativeRedraw();
             Plugin.Log.Information("[RaceKnight] 配置已保存");
         }
     }

@@ -95,7 +95,7 @@ Soil（XIVLauncherCN）界面与官方一致，步骤相同。
 - **版本号要同步**：每次发新版本，记得改 csproj 的 `<Version>` 和 `pluginmaster.json` 的 `AssemblyVersion`，否则 Dalamud 认为"已是最新"不会更新。
 - **API 级别匹配**：Soil 是 15；若将来 Soil 升级到更高 API，需要同步改 `DalamudApiLevel` 并重新针对新 dev 目录编译（参考 `build.cmd` / `pack.cmd` 里的 `DALAMUD_HOME`）。
 - **测试版**：想先给小范围用户测，把 `DownloadLinkTesting` + `TestingAssemblyVersion` 填好，并在 `/xlsettings` 勾选"显示测试插件"。
-- **Hide 不依赖 Penumbra，Replace 优先 Penumbra**：未装 Penumbra 时 Replace 仍可走原生重载（需填 `DrawHookIntervention.RedrawSig` 签名），仓库里所有用户都能用 Hide。
+- **Hide 不依赖 Penumbra，Replace 优先 Penumbra**：未装 Penumbra 时 Replace 仍可走原生重载（需在 RaceKnight 设置界面的 `RedrawSignature` 框填写当前版本的签名），仓库里所有用户都能用 Hide。
 
 ---
 

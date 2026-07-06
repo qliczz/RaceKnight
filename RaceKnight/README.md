@@ -4,7 +4,7 @@
 > - **按种族规则**：对指定种族（可加性别/部族/范围筛选）执行「隐藏」或「替换为其他种族外观」。
 > - **手动目标**：按显示名手动添加指定角色，对其单独施加「隐藏 / 替换」。
 >
-> **不依赖任何外部插件**：Hide 由插件改写 `GameObject.RenderFlags` 渲染标志位实现（清掉 `Model` 位即不渲染模型，**无需绘制钩子、无需任何版本签名、无需配置其它插件**）；Replace 改写外观字节 + 重绘（已装 Penumbra 时借其 IPC 重绘，否则走插件自带的原生重载函数，填好 `RedrawSig` 即可，无需 Penumbra）。
+> **不依赖任何外部插件**：Hide 由插件改写 `GameObject.RenderFlags` 渲染标志位实现（清掉 `Model` 位即不渲染模型，**无需绘制钩子、无需任何版本签名、无需配置其它插件**）；Replace 改写外观字节 + 重绘（已装 Penumbra 时借其 IPC 重绘，否则在设置里填好 `RedrawSignature` 签名即可，无需 Penumbra）。
 
 ## 目录结构
 ```
@@ -68,9 +68,9 @@ IFramework.Update
 ## ⚠️ 你需补全的“最后一步”（本环境无法运行游戏，留作 TODO）
 1. **Hide 已无需任何签名**：Hide 现在通过清除 `GameObject.RenderFlags` 的 `Model` 位实现，不依赖绘制钩子、不涉及版本签名，开箱即用。
    补充：默认只隐藏**模型**，**名称牌(Nameplate)仍会显示**。若想连名牌一起藏，把 `DrawHookIntervention.SetHidden` 里注释掉的那行 `go->RenderFlags &= ~CSVisibility.Nameplate;` 取消注释即可（一行搞定）。
-2. **Replace 原生重绘（可选，已搭好骨架）**：若你**没装 Penumbra**，Replace 改写完字节后需要“角色模型重载”才能刷新外观。
-   该原生重载函数**已实现为可编译骨架**：在 `DrawHookIntervention.RedrawSig` 填入当前版本的真实签名，
-   插件会 `Marshal.GetDelegateForFunctionPointer` 取得函数指针并在每帧保活时调用，触发对应 actor 模型重载。
+2. **Replace 原生重绘（可选，运行时可配置）**：若你**没装 Penumbra**，Replace 改写完字节后需要“角色模型重载”才能刷新外观。
+   该签名已改为**设置项**，无需改代码或重编译：游戏内打开 RaceKnight 设置 → “三、原生重绘” → 在 `Redraw 签名` 框粘贴当前游戏版本的字节特征码（SigScanner 格式，例如 `E8 ?? ?? ?? ?? 48 8B D3 ...`），保存即生效。
+   插件会把签名交给 `ISigScanner` 定位并重绘；签名随游戏版本/客户端变化，留空或填错时自动降级（仅改写字节、不刷新、不崩溃）。
    若已装 Penumbra，则自动优先走其 `RedrawObject` IPC，零配置即可，无需此步。
 3. **替换的本质说明**：Replace 改写 Customize 字节（含种族/性别/部族，**并自动按目标种族合法化脸型/体型/发型**，见 `RaceRemap`），属于“外观层”改变，并非替换完整模型文件；部分装备/骨骼表现可能不完全贴合，属预期现象。
 

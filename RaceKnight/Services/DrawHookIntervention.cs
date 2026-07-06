@@ -20,7 +20,7 @@ public enum RedrawMode
 {
     Unknown,  // 尚未确定
     Penumbra, // 走 Penumbra IPC（已装 Penumbra，零配置）
-    Native,   // 走原生重载函数（未装 Penumbra，需填 RedrawSig）
+    Native,   // 走原生重载函数（未装 Penumbra，需在设置填写 RedrawSignature）
     None,     // 都无法重绘（仅字节改写保活，外观可能不刷新）
 }
 
@@ -31,22 +31,17 @@ public enum RedrawMode
 ///  - <b>Replace</b>：改写 actor 的 Customize 字节为替换目标种族的<b>合法</b>外观，并触发重绘。
 ///             改写算法（含 Tribe 公式重算、Face/Model/Hair 合法化、RaceHairs 表）取自可运行插件 OopsAllRace，
 ///             见 <see cref="RaceRemap"/>。重绘优先用 Penumbra IPC（若用户已装 Penumbra，零配置即可）；
-///             否则走<b>原生重载函数</b>（见 <see cref="RedrawSig"/>，填好签名后无需 Penumbra 也能刷新外观）。
+///             否则走<b>原生重载函数</b>（见 <see cref="Configuration.RedrawSignature"/>，在插件设置里粘贴签名后无需 Penumbra 也能刷新外观）。
 ///
-/// ⚠️ 版本相关：仅原生 Replace 重载签名 <see cref="RedrawSig"/> 需随游戏版本更新确认。
-///    签名缺失时 Replace（未装 Penumbra）会报警告，但不会导致崩溃。Hide 已不再依赖任何签名。
+/// ⚠️ 版本相关：原生 Replace 重载签名 <see cref="Configuration.RedrawSignature"/> 需随游戏版本/客户端更新确认。
+///    签名留空或填错时 Replace（未装 Penumbra）会降级为“仅字节改写、外观可能不刷新”，但不会导致崩溃。
+///    Hide 已不再依赖任何签名。
 /// </summary>
 public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 {
     private readonly IFramework framework;
     private readonly ISigScanner sigScanner;
-
-    // 每个游戏版本需重新确认的“角色模型重载函数”签名（用于原生 Replace 重绘，无需 Penumbra）。
-    // 该函数以 CharacterBase*/Human* 指针为唯一参数（self），调用其 Original 即可触发该 actor 模型重载。
-    // 获取方式：参考同类开源插件当前版本的 “redraw / reload” 签名（常见为 Human 或 CharacterBase 的模型重载函数），
-    // 或从 Penumbra / Glamourer 源码里取它内部调用的原生重载函数签名。
-    // 留空/不匹配时，未装 Penumbra 的情况下 Replace 外观可能不刷新（会报警告）。
-    private const string RedrawSig = ""; // TODO: 填入当前版本“角色模型重载”函数签名
+    private readonly Configuration config;
 
     // Hide 用：记录每个被隐藏 actor 的原始 RenderFlags，用于失配时还原
     private readonly Dictionary<ulong, CSVisibility> hidden = new();
@@ -61,10 +56,11 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
     /// <summary>当前实际生效的重绘方式（两套方案并存时用于 UI 展示）。</summary>
     public RedrawMode ActiveRedraw { get; private set; } = RedrawMode.Unknown;
 
-    public DrawHookIntervention(IFramework framework, ISigScanner sigScanner)
+    public DrawHookIntervention(IFramework framework, ISigScanner sigScanner, Configuration config)
     {
         this.framework = framework;
         this.sigScanner = sigScanner;
+        this.config = config;
     }
 
     public void Enable()
@@ -100,21 +96,46 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         else
         {
             penumbraRedraw = null;
-            Plugin.Log.Warning("[RaceKnight] 未检测到 Penumbra；Replace 将改用原生重载函数（需填 RedrawSig）。");
+            Plugin.Log.Warning("[RaceKnight] 未检测到 Penumbra；Replace 将改用原生重载函数（需在设置里填写当前版本的 RedrawSignature）。");
         }
 
-        // 原生重载函数（不装 Penumbra 时 Replace 刷新用）
-        if (!string.IsNullOrWhiteSpace(RedrawSig) && sigScanner.TryScanText(RedrawSig, out var relAddr))
+        // 原生重载函数（不装 Penumbra 时 Replace 刷新用）：从配置读取签名并尝试定位
+        RefreshNativeRedraw();
+
+        framework.Update += OnUpdate;
+    }
+
+    /// <summary>
+    /// 依据 <see cref="Configuration.RedrawSignature"/> 重新定位“角色模型重载”函数。
+    /// 在插件启用时、以及用户在设置界面修改并保存签名后调用。
+    /// 签名留空 / 填错 / 关闭原生重绘时，<c>redrawFn</c> 置空，Replace 在未装 Penumbra 时自动降级（不崩溃）。
+    /// </summary>
+    public void RefreshNativeRedraw()
+    {
+        redrawFn = null;
+
+        if (!config.EnableNativeRedraw)
+        {
+            Plugin.Log.Information("[RaceKnight] 原生重绘已关闭（EnableNativeRedraw=false）；未装 Penumbra 时 Replace 仅改写字节。");
+            return;
+        }
+
+        var sig = (config.RedrawSignature ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(sig))
+        {
+            Plugin.Log.Warning("[RaceKnight] 未填写 RedrawSignature；未装 Penumbra 时 Replace 外观可能不刷新——请在设置里粘贴当前游戏版本的“模型重载”函数签名。");
+            return;
+        }
+
+        if (sigScanner.TryScanText(sig, out var relAddr))
         {
             redrawFn = Marshal.GetDelegateForFunctionPointer<RedrawDelegate>(relAddr);
             Plugin.Log.Information("[RaceKnight] 角色重载函数已定位（Replace 不装 Penumbra 亦可刷新外观）。");
         }
         else
         {
-            Plugin.Log.Warning("[RaceKnight] 未找到角色重载函数签名 RedrawSig，Replace 在不装 Penumbra 时外观可能不刷新——请在 DrawHookIntervention.RedrawSig 填入当前版本签名。");
+            Plugin.Log.Warning("[RaceKnight] RedrawSignature 未能在游戏中扫描到匹配函数（可能版本/客户端不符）；未装 Penumbra 时 Replace 外观可能不刷新。请核对签名。");
         }
-
-        framework.Update += OnUpdate;
     }
 
     public void Disable()
@@ -276,7 +297,7 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
             }
         }
 
-        // 否则走原生重载函数（需 RedrawSig 已填）
+        // 否则走原生重载函数（需在设置填写 RedrawSignature）
         var go = (CSGameObject*)obj.Address;
         var draw = go->DrawObject; // CharacterBase* / Human*
         if (draw != null && redrawFn != null)
@@ -291,7 +312,7 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         else
         {
             ActiveRedraw = RedrawMode.None;
-            Plugin.Log.Debug($"[RaceKnight] Replace 重绘：redrawFn 未就绪，actor {id} 外观可能不刷新（请填 RedrawSig 或安装 Penumbra）。");
+            Plugin.Log.Debug($"[RaceKnight] Replace 重绘：redrawFn 未就绪，actor {id} 外观可能不刷新（请在设置填写 RedrawSignature 或安装 Penumbra）。");
         }
     }
 

@@ -40,7 +40,7 @@ public sealed class Plugin : IDalamudPlugin
             SeedDefaults();
 
         // 单一后端：自带渲染标志位（Hide）+ 字节改写/重绘（Replace），不依赖任何外部插件
-        Intervention = new DrawHookIntervention(Framework, SigScanner);
+        Intervention = new DrawHookIntervention(Framework, SigScanner, Configuration);
         Scanner = new ActorScanner(ObjectTable, ClientState, Framework, Intervention);
         Intervention.Enable();
 
@@ -102,4 +102,7 @@ public sealed class Plugin : IDalamudPlugin
     private void OnCommand(string command, string args) => MainWindow.Toggle();
     public void ToggleConfigUi() => ConfigWindow.Toggle();
     public void ToggleMainUi() => MainWindow.Toggle();
+
+    /// <summary>用户在设置界面修改并保存“原生重绘签名”后调用，重新定位重载函数。</summary>
+    public void ReloadNativeRedraw() => Intervention.RefreshNativeRedraw();
 }
