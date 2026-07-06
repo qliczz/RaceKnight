@@ -1,8 +1,1 @@
-{
-  "Author": "your name here",
-  "Name": "RaceKnight",
-  "Punchline": "按种族 / 指定角色隐藏或替换外观（其他玩家 / NPC）",
-  "Description": "可配置规则：对其他玩家和 NPC 中指定种族（含性别/部族筛选）执行隐藏或替换为其他种族外观；也可手动添加指定角色按名字进行改动。Hide 改写渲染标志位、Replace 改写外观字节，均不依赖其他插件。",
-  "ApplicableVersion": "any",
-  "Tags": ["visual", "race", "filter", "qol"]
-}
+{"Author": "斯温", "Name": "RaceKnight", "Punchline": "高度自定义的人物/NPC过滤插件", "Description": "我就是要种族骑士", "ApplicableVersion": "any", "Tags": ["appearance", "race", "filter", "visual"]}

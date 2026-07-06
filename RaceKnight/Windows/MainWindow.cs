@@ -3,6 +3,8 @@ using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using RaceFilter.Services;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 
 namespace RaceFilter.Windows;
 
@@ -23,6 +25,13 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    private static void DrawIcon(FontAwesomeIcon icon)
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        ImGui.Text(icon.ToIconString());
+        ImGui.PopFont();
+    }
+
     public override void Draw()
     {
         ImGui.Text("种族过滤器已运行（仅影响你自己的客户端画面，永不影响本人）。");
@@ -41,7 +50,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Text($"Replace 重绘后端：{mode}");
         ImGui.Spacing();
 
-        if (ImGui.Button("打开设置"))
+        if (ImGui.Button($"{FontAwesomeIcon.Cog.ToIconString()} 打开设置"))
             plugin.ToggleConfigUi();
 
         ImGui.Separator();

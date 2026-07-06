@@ -3,6 +3,8 @@ using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using RaceFilter.Model;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility;
 
 namespace RaceFilter.Windows;
 
@@ -23,12 +25,12 @@ public class ConfigWindow : Window, IDisposable
     {
         var cfg = plugin.Configuration;
 
-        if (ImGui.CollapsingHeader("一、按种族规则", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader($"{FontAwesomeIcon.EyeSlash.ToIconString()} 一、按种族规则", ImGuiTreeNodeFlags.DefaultOpen))
             DrawRules(cfg);
 
         ImGui.Separator();
 
-        if (ImGui.CollapsingHeader("二、手动目标（按名字）", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader($"{FontAwesomeIcon.UserSecret.ToIconString()} 二、手动目标（按名字）", ImGuiTreeNodeFlags.DefaultOpen))
             DrawManualTargets(cfg);
 
         ImGui.Separator();
@@ -41,7 +43,7 @@ public class ConfigWindow : Window, IDisposable
                           "Replace 在装有 Penumbra 时借其 IPC 重绘，否则自动改用插件自带的原生可见性切换重绘（同样零配置、无需任何签名）。");
 
         ImGui.Separator();
-        if (ImGui.Button("保存配置"))
+        if (ImGui.Button($"{FontAwesomeIcon.Save.ToIconString()} 保存配置"))
         {
             cfg.Save();
             Plugin.Log.Information("[RaceKnight] 配置已保存");
@@ -101,7 +103,7 @@ public class ConfigWindow : Window, IDisposable
                     rule.ReplacementTribe = repTribe;
                 }
 
-                if (ImGui.Button("删除该规则"))
+                if (ImGui.Button($"{FontAwesomeIcon.TrashAlt.ToIconString()} 删除该规则"))
                 {
                     cfg.Rules.RemoveAt(i);
                     cfg.Save();
@@ -113,7 +115,7 @@ public class ConfigWindow : Window, IDisposable
             ImGui.PopID();
         }
 
-        if (ImGui.Button("+ 新增种族规则"))
+        if (ImGui.Button($"{FontAwesomeIcon.Plus.ToIconString()} 新增种族规则"))
             cfg.Rules.Add(new RaceRule());
     }
 
@@ -160,7 +162,7 @@ public class ConfigWindow : Window, IDisposable
                     m.ReplacementTribe = repTribe;
                 }
 
-                if (ImGui.Button("删除该目标"))
+                if (ImGui.Button($"{FontAwesomeIcon.TrashAlt.ToIconString()} 删除该目标"))
                 {
                     cfg.ManualTargets.RemoveAt(i);
                     cfg.Save();
@@ -174,6 +176,9 @@ public class ConfigWindow : Window, IDisposable
 
         if (ImGui.Button("+ 新增手动目标"))
             cfg.ManualTargets.Add(new ManualTarget());
+
+        ImGui.Spacing();
+        ImGui.TextWrapped($"提示：{FontAwesomeIcon.InfoCircle.ToIconString()} 插件完全不依赖任何外部插件……");
     }
 
     // ===== 辅助：文本/枚举/可空下拉 =====
@@ -218,5 +223,12 @@ public class ConfigWindow : Window, IDisposable
         var v = value.HasValue ? value.Value : -1;
         if (ImGui.InputInt(label, ref v))
             value = v < 0 ? (byte?)null : (byte)Math.Max(0, Math.Min(13, v));
+    }
+
+    private static void DrawIcon(FontAwesomeIcon icon)
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        ImGui.Text(icon.ToIconString());
+        ImGui.PopFont();
     }
 }

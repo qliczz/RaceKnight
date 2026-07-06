@@ -1,10 +1,11 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.0.0.3</Version>
-    <PackageProjectUrl>https://github.com/your-name/RaceKnight</PackageProjectUrl>
+    <Version>0.0.0.4</Version>
+    <PackageProjectUrl>https://github.com/qliczz/RaceKnight</PackageProjectUrl>
     <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
     <IsPackable>false</IsPackable>
     <!-- DrawHookIntervention 使用原生指针与游戏函数钩子 -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
   </PropertyGroup>
 </Project>
