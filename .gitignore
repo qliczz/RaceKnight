@@ -1,0 +1,17 @@
+# Dalamud 插件构建产物
+RaceKnight/bin/
+RaceKnight/obj/
+RaceKnight/dist/
+
+# 本地测试用的 DALAMUD_HOME（如果有人下载到仓库里）
+dalamud/
+dalamud.zip
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+
+# 操作系统
+Thumbs.db
+.DS_Store

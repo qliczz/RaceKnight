@@ -1,0 +1,107 @@
+# RaceKnight 自动发布工作流
+#
+# 触发方式：给仓库打一个形如 v0.0.0.1 的 tag 并推送，即自动：
+#   1. 下载官方 Dalamud api15 程序集（充当 DALAMUD_HOME）
+#   2. dotnet build -c Release 编译插件
+#   3. 取出 DalamudPackager 生成的 latest.zip，改名 RaceKnight.zip
+#   4. 自动生成“发布用 pluginmaster.json”（填入真实仓库地址与本次 tag 的下载直链）
+#   5. 以该 tag 创建 GitHub Release，并上传 RaceKnight.zip 与 pluginmaster.json
+#
+# 用法：
+#   git tag v0.0.0.1
+#   git push --tags
+# 之后在 GitHub 仓库的 Actions / Releases 页面即可看到自动产出。
+#
+# 注意：
+#   - 发布前请同步更新 RaceKnight/RaceKnight.csproj 里的 <Version>
+#     与 repo/pluginmaster.json 里的 AssemblyVersion / TestingAssemblyVersion，
+#     使它们与本次 tag 一致（pluginmaster.json 里的“你的用户名”占位符无需手填，
+#     工作流会在发版时自动替换为你的真实 GitHub 用户名，并生成可直接提交的 pluginmaster.json）。
+#   - 若你调整了插件在仓库里的位置，记得同步修改下面的编译路径 RaceKnight/RaceKnight.csproj。
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # 仅当推送形如 v0.0.0.1 的 tag 时触发
+
+permissions:
+  contents: write    # 允许 action-gh-release 创建 Release
+
+jobs:
+  build:
+    runs-on: windows-latest   # 必须 Windows：MSBuild 的 DalamudLibPath 校验只认原生 Windows 路径
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: 缓存 NuGet 包
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: 下载 Dalamud 程序集 (api15) 作为 DALAMUD_HOME
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "$PWD\dalamud" -Force | Out-Null
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/goatcorp/dalamud-distrib/main/api15/latest.zip" -OutFile "$PWD\dalamud.zip"
+          Expand-Archive -Path "$PWD\dalamud.zip" -DestinationPath "$PWD\dalamud" -Force
+          Remove-Item "$PWD\dalamud.zip"
+          # 关键：$PWD 在 Windows runner 上是原生 Windows 路径（C:\...），
+          # 这样 Dalamud.NET.Sdk 的 Exists() 校验才会通过。
+          echo "DALAMUD_HOME=$PWD\dalamud" >> $env:GITHUB_ENV
+
+      - name: 编译 Release
+        shell: pwsh
+        run: dotnet build RaceKnight/RaceKnight.csproj -c Release
+
+      - name: 准备发布包 (latest.zip -> RaceKnight.zip)
+        shell: pwsh
+        run: |
+          $src = "$PWD\RaceKnight\bin\Release\RaceKnight\latest.zip"
+          if (-not (Test-Path $src)) {
+            Write-Error "未找到编译产物：$src 。请检查上一步编译是否成功。"
+            exit 1
+          }
+          Copy-Item -Path $src -Destination "$PWD\RaceKnight.zip" -Force
+
+      - name: 生成发布用 pluginmaster.json（自动填入仓库地址与版本）
+        shell: pwsh
+        run: |
+          $owner = "${{ github.repository_owner }}"
+          $tag   = "${{ github.ref_name }}"
+          $src   = "$PWD\repo\pluginmaster.json"
+          $out   = "$PWD\pluginmaster.json"
+          if (-not (Test-Path $src)) {
+            Write-Warning "未找到 repo/pluginmaster.json，跳过生成发布用 pluginmaster.json"
+            exit 0
+          }
+          # 把模板里的占位符替换为真实值：
+          #   你的用户名 -> 你的 GitHub 用户名（用于 RepoUrl / DownloadLink）
+          #   你的名字   -> 同上（Author）
+          #   v0.0.0.1   -> 本次 tag（下载直链版本号，注意转义正则里的点）
+          # 必须指定 -Encoding utf8，否则 PowerShell 默认 ANSI/GBK 会把中文描述写成乱码。
+          (Get-Content $src -Raw -Encoding utf8) `
+            -replace '你的用户名', $owner `
+            -replace '你的名字',   $owner `
+            -replace 'v0\.0\.0\.1', $tag `
+            | Set-Content $out -Encoding utf8 -NoNewline
+          Write-Host "已生成发布用 pluginmaster.json：owner=$owner tag=$tag"
+
+      - name: 创建 GitHub Release 并上传
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            RaceKnight.zip
+            pluginmaster.json
+          generate_release_notes: true   # 根据 commit 自动生成更新说明
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
