@@ -34,7 +34,7 @@ public class MainWindow : Window, IDisposable
         var mode = plugin.ActiveRedraw switch
         {
             RedrawMode.Penumbra => "Penumbra IPC（已装 Penumbra，零配置）",
-            RedrawMode.Native   => "原生重载函数（未装 Penumbra，需在设置填写 RedrawSignature）",
+            RedrawMode.Native   => "原生可见性切换（未装 Penumbra，零配置、无需签名）",
             RedrawMode.None     => "无（仅字节改写，外观可能不刷新）",
             _                   => "检测中…",
         };

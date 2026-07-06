@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 using Dalamud.Game.ClientState.Objects.Enums;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin;
@@ -20,27 +19,28 @@ public enum RedrawMode
 {
     Unknown,  // 尚未确定
     Penumbra, // 走 Penumbra IPC（已装 Penumbra，零配置）
-    Native,   // 走原生重载函数（未装 Penumbra，需在设置填写 RedrawSignature）
+    Native,   // 走原生可见性切换（不装 Penumbra 也零配置，无需任何签名）
     None,     // 都无法重绘（仅字节改写保活，外观可能不刷新）
 }
 
 /// <summary>
 /// 单一后端，<b>不依赖任何外部插件</b>：
-///  - <b>Hide</b>   ：每帧把命中 actor 的 <c>GameObject.RenderFlags</c> 的 <see cref="CSVisibility.Model"/> 位清掉，使其模型不渲染。
-///             无需绘制钩子、无需任何版本签名、无需配置其它插件，比“钩绘制函数”稳定得多。
-///  - <b>Replace</b>：改写 actor 的 Customize 字节为替换目标种族的<b>合法</b>外观，并触发重绘。
-///             改写算法（含 Tribe 公式重算、Face/Model/Hair 合法化、RaceHairs 表）取自可运行插件 OopsAllRace，
-///             见 <see cref="RaceRemap"/>。重绘优先用 Penumbra IPC（若用户已装 Penumbra，零配置即可）；
-///             否则走<b>原生重载函数</b>（见 <see cref="Configuration.RedrawSignature"/>，在插件设置里粘贴签名后无需 Penumbra 也能刷新外观）。
+///  - <b>Hide</b>   ：改写命中 actor 的 <c>GameObject.RenderFlags</c> 的 <see cref="CSVisibility.Model"/> 位。
+///            置位 = 隐藏/拆掉模型，清位 = 显示/重建模型。无需绘制钩子、无需任何版本签名、无需配置其它插件。
+///  - <Replace>：改写 actor 的 Customize 字节为替换目标种族的<b>合法</b>外观，并触发重绘。
+///            改写算法（含 Tribe 公式重算、Face/Model/Hair 合法化、RaceHairs 表）取自可运行插件 OopsAllRace，
+///            见 <see cref="RaceRemap"/>。重绘优先用 Penumbra IPC（若用户已装 Penumbra，零配置即可）；
+///            否则走<b>原生可见性切换</b>（同样零配置，无需签名）。
 ///
-/// ⚠️ 版本相关：原生 Replace 重载签名 <see cref="Configuration.RedrawSignature"/> 需随游戏版本/客户端更新确认。
-///    签名留空或填错时 Replace（未装 Penumbra）会降级为“仅字节改写、外观可能不刷新”，但不会导致崩溃。
+/// ⚠️ 重绘机制说明（已对照 Penumbra 1.6.1.10 源码确认，<b>不需要任何签名</b>）：
+///    原生重绘 = 一帧把目标 actor 的 <c>RenderFlags.Model</c> 位置位（让游戏拆掉并暂停渲染该模型），
+///    下一帧清位（游戏据此重建 DrawObject 并重新渲染，外观随之刷新）。这是 Penumbra 内部 RedrawService
+///    实际使用的同一手法，版本无关、稳定，且不会因为“签名随版本失效”而降级。
 ///    Hide 已不再依赖任何签名。
 /// </summary>
 public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 {
     private readonly IFramework framework;
-    private readonly ISigScanner sigScanner;
     private readonly Configuration config;
 
     // Hide 用：记录每个被隐藏 actor 的原始 RenderFlags，用于失配时还原
@@ -50,23 +50,32 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
     private readonly Dictionary<ulong, (MatchSpec spec, byte[] orig)> replaced = new();
     // Penumbra 重绘 IPC（Action<int>，按 ObjectIndex 重绘模型）。装了 Penumbra 才会连上。
     private ICallGateSubscriber<int, object>? penumbraRedraw;
-    private RedrawDelegate? redrawFn;
     private int frame;
+
+    // 原生重绘队列：分两帧完成“置位→清位”的切换。
+    // hideQueue 中的 actor 本帧置位（拆模型），随后转入 showQueue；
+    // showQueue 中的 actor 下一帧清位（重建/显示）。两帧分离才能保证游戏真正重建模型。
+    private readonly Queue<ulong> nativeHideQueue = new();
+    private readonly Queue<ulong> nativeShowQueue = new();
+
+    // 延后重绘队列：race 替换这类“整模型重建”在首帧重绘后，游戏内部刷新往往还差一口气，
+    // 故在若干帧后再补一次原生重绘（参考 Glamourer PenumbraAutoRedraw 的 WaitFrames=5 思路）。
+    // 每条只触发一次，避免无限循环。
+    private readonly Queue<(ulong Id, int Frames)> redrawLater = new();
 
     /// <summary>当前实际生效的重绘方式（两套方案并存时用于 UI 展示）。</summary>
     public RedrawMode ActiveRedraw { get; private set; } = RedrawMode.Unknown;
 
-    public DrawHookIntervention(IFramework framework, ISigScanner sigScanner, Configuration config)
+    public DrawHookIntervention(IFramework framework, Configuration config)
     {
         this.framework = framework;
-        this.sigScanner = sigScanner;
         this.config = config;
     }
 
     public void Enable()
     {
         // 检测 Penumbra 是否可用：尝试其稳定的 ApiVersion IPC（Func<int>）。
-        // 若 Penumbra 未加载，InvokeFunc 会抛，捕获后降级到原生重载。
+        // 若 Penumbra 未加载，InvokeFunc 会抛，捕获后降级到原生可见性切换。
         var penumbraAvailable = false;
         try
         {
@@ -96,52 +105,16 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         else
         {
             penumbraRedraw = null;
-            Plugin.Log.Warning("[RaceKnight] 未检测到 Penumbra；Replace 将改用原生重载函数（需在设置里填写当前版本的 RedrawSignature）。");
+            Plugin.Log.Information("[RaceKnight] 未检测到 Penumbra；Replace 将改用原生可见性切换重绘（零配置、无需签名）。");
         }
-
-        // 原生重载函数（不装 Penumbra 时 Replace 刷新用）：从配置读取签名并尝试定位
-        RefreshNativeRedraw();
 
         framework.Update += OnUpdate;
-    }
-
-    /// <summary>
-    /// 依据 <see cref="Configuration.RedrawSignature"/> 重新定位“角色模型重载”函数。
-    /// 在插件启用时、以及用户在设置界面修改并保存签名后调用。
-    /// 签名留空 / 填错 / 关闭原生重绘时，<c>redrawFn</c> 置空，Replace 在未装 Penumbra 时自动降级（不崩溃）。
-    /// </summary>
-    public void RefreshNativeRedraw()
-    {
-        redrawFn = null;
-
-        if (!config.EnableNativeRedraw)
-        {
-            Plugin.Log.Information("[RaceKnight] 原生重绘已关闭（EnableNativeRedraw=false）；未装 Penumbra 时 Replace 仅改写字节。");
-            return;
-        }
-
-        var sig = (config.RedrawSignature ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(sig))
-        {
-            Plugin.Log.Warning("[RaceKnight] 未填写 RedrawSignature；未装 Penumbra 时 Replace 外观可能不刷新——请在设置里粘贴当前游戏版本的“模型重载”函数签名。");
-            return;
-        }
-
-        if (sigScanner.TryScanText(sig, out var relAddr))
-        {
-            redrawFn = Marshal.GetDelegateForFunctionPointer<RedrawDelegate>(relAddr);
-            Plugin.Log.Information("[RaceKnight] 角色重载函数已定位（Replace 不装 Penumbra 亦可刷新外观）。");
-        }
-        else
-        {
-            Plugin.Log.Warning("[RaceKnight] RedrawSignature 未能在游戏中扫描到匹配函数（可能版本/客户端不符）；未装 Penumbra 时 Replace 外观可能不刷新。请核对签名。");
-        }
     }
 
     public void Disable()
     {
         framework.Update -= OnUpdate;
-        redrawFn = null;
+        penumbraRedraw = null;
 
         foreach (var kv in hidden.ToList())
             RestoreVisibility(kv.Key, kv.Value);
@@ -150,16 +123,21 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         foreach (var kv in replaced.ToList())
             Restore(kv.Key, kv.Value.orig);
         replaced.Clear();
+
+        nativeHideQueue.Clear();
+        nativeShowQueue.Clear();
+        redrawLater.Clear();
     }
 
     private unsafe void OnUpdate(IFramework _)
     {
         frame++;
-        // Hide：每帧保活（清除 Model 位，防止游戏重新置位）
+
+        // Hide：每帧保活（置位 Model 位，保持模型不渲染）
         foreach (var id in hidden.Keys)
         {
             if (Find(id) is { } obj)
-                SetHidden(obj.Address, true);
+                SetModelHidden(obj.Address, true);
         }
 
         // Replace：每帧保活字节，每 30 帧触发一次重绘以刷新外观
@@ -171,6 +149,33 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
             if (changed || frame % 30 == 0)
                 Redraw(kv.Key);
         }
+
+        // 延后重绘：倒计时归零时补一次原生重绘（race 替换首帧后的二次刷新）。
+        while (redrawLater.Count > 0)
+        {
+            var (id, f) = redrawLater.Dequeue();
+            if (f <= 1)
+                nativeHideQueue.Enqueue(id); // 触发一次完整的“置位→清位”重绘
+            else
+                redrawLater.Enqueue((id, f - 1));
+        }
+
+        // 原生重绘：先处理上一帧入队的“清位”（重建/显示），再处理本帧的“置位”（拆模型）。
+        // 两帧分离是重绘生效的关键。
+        while (nativeShowQueue.Count > 0)
+        {
+            var id = nativeShowQueue.Dequeue();
+            if (Find(id) is { } showObj)
+                SetModelHidden(showObj.Address, false);
+        }
+
+        while (nativeHideQueue.Count > 0)
+        {
+            var id = nativeHideQueue.Dequeue();
+            if (Find(id) is { } hideObj)
+                SetModelHidden(hideObj.Address, true);
+            nativeShowQueue.Enqueue(id);
+        }
     }
 
     public void OnActorMatched(IGameObject actor, MatchSpec spec)
@@ -180,7 +185,7 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
             if (!hidden.ContainsKey(actor.GameObjectId))
             {
                 hidden[actor.GameObjectId] = GetRenderFlags(actor.Address);
-                SetHidden(actor.Address, true);
+                SetModelHidden(actor.Address, true);
             }
         }
         else // Replace
@@ -191,6 +196,7 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
             replaced[actor.GameObjectId] = (spec, orig);
             ApplyReplaceBytes(c, spec, orig);
             Redraw(actor.GameObjectId);
+            ScheduleRedraw(actor.GameObjectId, 5); // race 替换首帧后补一次，确保整模型重建生效
         }
     }
 
@@ -204,6 +210,8 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
     }
 
     // ===== Hide 实现（渲染标志位）=====
+    // RenderFlags.Model 位（值 2）：置位 = 隐藏/拆模型，清位 = 显示/重建。
+    // 该语义与 Penumbra RedrawService.WriteInvisible / WriteVisible 完全一致（已对照其 1.6.1.10 反编译确认）。
 
     private unsafe CSVisibility GetRenderFlags(nint addr)
     {
@@ -213,24 +221,17 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         return go->RenderFlags;
     }
 
-    private unsafe void SetHidden(nint addr, bool hide)
+    private unsafe void SetModelHidden(nint addr, bool hide)
     {
         if (addr == IntPtr.Zero)
             return;
         var go = (CSGameObject*)addr;
+        var flags = (ulong)go->RenderFlags;
         if (hide)
-        {
-            // 清掉 Model 位 => 该 actor 模型不渲染（Hide 生效）
-            // 用 ulong 中转以避免枚举位运算的结果类型歧义，确保稳定编译
-            var flags = (ulong)go->RenderFlags;
-            flags &= ~(ulong)CSVisibility.Model;
-            go->RenderFlags = (CSVisibility)flags;
-
-            // 若还想连名称牌一起藏，可同时清掉 Nameplate 位：
-            //   flags = (ulong)go->RenderFlags;
-            //   flags &= ~(ulong)CSVisibility.Nameplate;
-            //   go->RenderFlags = (CSVisibility)flags;
-        }
+            flags |= (ulong)CSVisibility.Model;       // 置位 = 隐藏/拆模型
+        else
+            flags &= ~(ulong)CSVisibility.Model;      // 清位 = 显示/重建
+        go->RenderFlags = (CSVisibility)flags;
     }
 
     private unsafe void RestoreVisibility(ulong id, CSVisibility orig)
@@ -272,17 +273,21 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
         }
 
         Redraw(id);
+        ScheduleRedraw(id, 5);
     }
 
-    private unsafe void Redraw(ulong id)
+    /// <summary>安排一次延后重绘（仅触发一次），用于 race 替换/还原后的二次刷新。</summary>
+    private void ScheduleRedraw(ulong id, int frames) => redrawLater.Enqueue((id, frames));
+
+    private void Redraw(ulong id)
     {
         var obj = Find(id);
         if (obj == null || obj.Address == IntPtr.Zero)
             return;
         var index = obj.ObjectIndex; // Penumbra 按“对象索引”重绘，不是 GameObjectId
 
-        // 优先 Penumbra IPC（零配置，若用户已装）
-        if (penumbraRedraw != null)
+        // 优先 Penumbra IPC（零配置，若用户已装且未在设置里关闭）
+        if (config.PreferPenumbraRedraw && penumbraRedraw != null)
         {
             try
             {
@@ -297,23 +302,9 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
             }
         }
 
-        // 否则走原生重载函数（需在设置填写 RedrawSignature）
-        var go = (CSGameObject*)obj.Address;
-        var draw = go->DrawObject; // CharacterBase* / Human*
-        if (draw != null && redrawFn != null)
-        {
-            try
-            {
-                redrawFn((IntPtr)draw);
-                ActiveRedraw = RedrawMode.Native;
-            }
-            catch { }
-        }
-        else
-        {
-            ActiveRedraw = RedrawMode.None;
-            Plugin.Log.Debug($"[RaceKnight] Replace 重绘：redrawFn 未就绪，actor {id} 外观可能不刷新（请在设置填写 RedrawSignature 或安装 Penumbra）。");
-        }
+        // 原生重绘：两帧切换 RenderFlags.Model 位，无需任何签名。
+        nativeHideQueue.Enqueue(id);
+        ActiveRedraw = RedrawMode.Native;
     }
 
     private IGameObject? Find(ulong id)
@@ -328,8 +319,6 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 
         return null;
     }
-
-    private delegate void RedrawDelegate(IntPtr self);
 
     public void Dispose() => Disable();
 }

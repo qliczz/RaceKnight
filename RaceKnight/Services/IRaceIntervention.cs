@@ -16,7 +16,4 @@ public interface IRaceIntervention
 
     /// <summary>当前实际生效的 Replace 重绘后端（Penumbra / 原生 / 无）。</summary>
     RedrawMode ActiveRedraw { get; }
-
-    /// <summary>依据最新配置重新定位原生“模型重载”函数（用户在设置里修改 Redraw 签名后调用）。</summary>
-    void RefreshNativeRedraw();
 }

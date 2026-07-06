@@ -5,7 +5,7 @@
 ## `RaceKnight/`（要做的插件）⭐
 按「种族规则」或「手动指定角色（按名字）」执行「隐藏 / 替换为其他种族外观」的 Dalamud 插件。
 作用范围=其他玩家+NPC，可配置；**不依赖任何外部插件**（Hide 用渲染标志位 `GameObject.RenderFlags`，无需绘制钩子/签名；
-Replace 用字节改写+重绘，重绘优先借 Penumbra IPC，未装时走插件自带的原生重载函数（设置里的 `RedrawSignature` 签名））。
+Replace 用字节改写+重绘，重绘优先借 Penumbra IPC，未装时自动改用插件自带的原生可见性切换重绘（均零配置、无需任何签名））。
 - 入口与逻辑见 `RaceKnight/Plugin.cs`、`Services/`（ActorScanner + DrawHookIntervention）、`Windows/`、`Model/`。
 - 详细说明与“最后一步”补全项见 `RaceKnight/README.md`。
 
