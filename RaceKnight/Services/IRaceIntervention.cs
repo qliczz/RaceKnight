@@ -13,6 +13,8 @@ public interface IRaceIntervention
     void Disable();
     void OnActorMatched(IGameObject actor, MatchSpec spec);
     void OnActorUnmatched(IGameObject actor);
+    /// <summary>对象已离开 ObjectTable；只丢弃缓存，不再按可能复用的 GameObjectId 写回。</summary>
+    void OnActorGone(ulong gameObjectId);
 
     /// <summary>当前实际生效的 Replace 重绘后端（Penumbra / 原生 / 无）。</summary>
     RedrawMode ActiveRedraw { get; }
