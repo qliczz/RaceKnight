@@ -2,6 +2,8 @@
 RaceKnight/bin/
 RaceKnight/obj/
 RaceKnight/dist/
+tests/**/bin/
+tests/**/obj/
 
 # 本地测试用的 DALAMUD_HOME（如果有人下载到仓库里）
 dalamud/

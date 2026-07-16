@@ -34,15 +34,15 @@ jobs:
     runs-on: windows-latest   # 必须 Windows：MSBuild 的 DalamudLibPath 校验只认原生 Windows 路径
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: 安装 .NET 10 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '10.0.x'
 
       - name: 缓存 NuGet 包
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}
@@ -97,7 +97,7 @@ jobs:
           Write-Host "已生成发布用 pluginmaster.json：owner=$owner tag=$tag"
 
       - name: 创建 GitHub Release 并上传
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             RaceKnight.zip

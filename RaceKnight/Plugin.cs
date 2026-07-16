@@ -40,7 +40,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // 单一后端：自带渲染标志位（Hide）+ 字节改写/重绘（Replace），不依赖任何外部插件
         Intervention = new DrawHookIntervention(Framework, Configuration);
-        Scanner = new ActorScanner(ObjectTable, ClientState, Framework, Intervention);
+        Scanner = new ActorScanner(ObjectTable, ClientState, Framework, Intervention, Configuration);
         Intervention.Enable();
 
         ConfigWindow = new ConfigWindow(this);
@@ -94,8 +94,8 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
         MainWindow.Dispose();
-        Intervention.Disable();
         Scanner.Dispose();
+        Intervention.Disable();
     }
 
     private void OnCommand(string command, string args) => MainWindow.Toggle();

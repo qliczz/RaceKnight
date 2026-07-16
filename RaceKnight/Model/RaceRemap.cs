@@ -13,7 +13,7 @@ namespace RaceFilter.Model;
 ///  - <b>Glamourer</b>（1.6.1.8，反编译 <c>CustomizeSet.Count</c> / <c>CustomizeSet.HrothgarFaceHack</c> 学习）：
 ///    提供<b>按种族合法化</b>的权威规则——每个种族的脸型/发量数量不同，且 Hrothgar 的脸型 5–8 只是 1–4 的别名。
 ///
-/// 结构体布局 Race=0 / Gender=1 / BodyType=2 / Tribe=3 / ModelType=4 / FaceType=5 / HairStyle=6 …
+/// CustomizeIndex 负责映射真实布局（Race=0 / Gender=1 / ModelType=2 / Height=3 / Tribe=4 / FaceType=5 / HairStyle=6 …），
 /// 与 Dalamud 的 <see cref="CustomizeIndex"/> 枚举（编译期绑定到真实字节偏移）完全一致，故可直接套用。
 ///
 /// 只改种族字节是不够的：每个种族的<b>脸型/发型/体型数量不同</b>，
@@ -83,10 +83,10 @@ public static class RaceRemap
         cz[(int)CustomizeIndex.FaceType] = (byte)(1 + (((Math.Max((byte)1, face) - 1) % faceMax + faceMax) % faceMax));
 
         // ModelType（体型）：绝大多数种族合法值为 1–2。
-        cz[(int)CustomizeIndex.ModelType] = (byte)(1 + (model % ModelTypeCount));
+        cz[(int)CustomizeIndex.ModelType] = (byte)(1 + ((Math.Max((byte)1, model) - 1) % ModelTypeCount));
 
         // HairStyle：按目标种族发量取整，1 起始（原值为 0 时也安全映射到 1）。
         var hairMax = RaceHairs.GetValueOrDefault(targetRace, 12);
-        cz[(int)CustomizeIndex.HairStyle] = (byte)(1 + (hair % hairMax));
+        cz[(int)CustomizeIndex.HairStyle] = (byte)(1 + ((Math.Max((byte)1, hair) - 1) % hairMax));
     }
 }

@@ -50,7 +50,6 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
     private readonly Dictionary<ulong, (MatchSpec spec, byte[] orig)> replaced = new();
     // Penumbra 重绘 IPC（Action<int>，按 ObjectIndex 重绘模型）。装了 Penumbra 才会连上。
     private ICallGateSubscriber<int, object>? penumbraRedraw;
-    private int frame;
 
     // 原生重绘队列：分两帧完成“置位→清位”的切换。
     // hideQueue 中的 actor 本帧置位（拆模型），随后转入 showQueue；
@@ -131,8 +130,6 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 
     private unsafe void OnUpdate(IFramework _)
     {
-        frame++;
-
         // Hide：每帧保活（置位 Model 位，保持模型不渲染）
         foreach (var id in hidden.Keys)
         {
@@ -140,18 +137,19 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
                 SetModelHidden(obj.Address, true);
         }
 
-        // Replace：每帧保活字节，每 30 帧触发一次重绘以刷新外观
+        // Replace：每帧保活字节，仅在游戏把字节覆盖回去时重绘。
         foreach (var kv in replaced)
         {
             if (Find(kv.Key) is not ICharacter c)
                 continue;
             var changed = ApplyReplaceBytes(c, kv.Value.spec, kv.Value.orig);
-            if (changed || frame % 30 == 0)
+            if (changed)
                 Redraw(kv.Key);
         }
 
         // 延后重绘：倒计时归零时补一次原生重绘（race 替换首帧后的二次刷新）。
-        while (redrawLater.Count > 0)
+        var delayedCount = redrawLater.Count;
+        for (var i = 0; i < delayedCount; i++)
         {
             var (id, f) = redrawLater.Dequeue();
             if (f <= 1)
@@ -202,11 +200,21 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 
     public void OnActorUnmatched(IGameObject actor)
     {
+        RemoveQueuedRedraws(actor.GameObjectId);
+
         if (hidden.Remove(actor.GameObjectId, out var orig))
             RestoreVisibility(actor.GameObjectId, orig);
 
         if (replaced.Remove(actor.GameObjectId, out var entry))
             Restore(actor.GameObjectId, entry.orig);
+    }
+
+    public void OnActorGone(ulong gameObjectId)
+    {
+        // 对象已不存在，原始字节/可见性也不再有恢复目标。只清理状态，防止 ID 复用污染新对象。
+        hidden.Remove(gameObjectId);
+        replaced.Remove(gameObjectId);
+        RemoveQueuedRedraws(gameObjectId);
     }
 
     // ===== Hide 实现（渲染标志位）=====
@@ -278,6 +286,24 @@ public sealed class DrawHookIntervention : IRaceIntervention, IDisposable
 
     /// <summary>安排一次延后重绘（仅触发一次），用于 race 替换/还原后的二次刷新。</summary>
     private void ScheduleRedraw(ulong id, int frames) => redrawLater.Enqueue((id, frames));
+
+    private void RemoveQueuedRedraws(ulong id)
+    {
+        FilterQueue(nativeHideQueue, item => item != id);
+        FilterQueue(nativeShowQueue, item => item != id);
+        FilterQueue(redrawLater, item => item.Id != id);
+    }
+
+    private static void FilterQueue<T>(Queue<T> queue, Func<T, bool> keep)
+    {
+        var count = queue.Count;
+        for (var i = 0; i < count; i++)
+        {
+            var item = queue.Dequeue();
+            if (keep(item))
+                queue.Enqueue(item);
+        }
+    }
 
     private void Redraw(ulong id)
     {

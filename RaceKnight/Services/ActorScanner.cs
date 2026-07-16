@@ -21,15 +21,18 @@ public sealed class ActorScanner : IDisposable
     private readonly IClientState clientState;
     private readonly IFramework framework;
     private readonly IRaceIntervention intervention;
+    private readonly Configuration config;
 
-    private readonly Dictionary<ulong, string> matched = new();
+    private readonly Dictionary<ulong, MatchState> matched = new();
 
-    public ActorScanner(IObjectTable objectTable, IClientState clientState, IFramework framework, IRaceIntervention intervention)
+    public ActorScanner(IObjectTable objectTable, IClientState clientState, IFramework framework,
+        IRaceIntervention intervention, Configuration config)
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
         this.framework = framework;
         this.intervention = intervention;
+        this.config = config;
         framework.Update += OnUpdate;
     }
 
@@ -37,7 +40,6 @@ public sealed class ActorScanner : IDisposable
 
     private void OnUpdate(IFramework _)
     {
-        var config = Plugin.PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         var rules = config.Rules.Where(r => r.Enabled).ToList();
         var manuals = config.ManualTargets.Where(m => m.Enabled).ToList();
 
@@ -57,19 +59,28 @@ public sealed class ActorScanner : IDisposable
                 continue;
 
             seen.Add(obj.GameObjectId);
+            var spec = SpecFor(key, rules, manuals);
+            var state = new MatchState(key, spec, obj.Address);
 
             if (matched.TryGetValue(obj.GameObjectId, out var prev))
             {
-                if (prev != key) // 命中来源变了：先还原再按新指令应用
+                // GameObjectId 可能在对象离场后被复用。地址变化时绝不能把旧快照写到新对象。
+                if (prev.Address != obj.Address)
+                {
+                    intervention.OnActorGone(obj.GameObjectId);
+                    matched[obj.GameObjectId] = state;
+                    intervention.OnActorMatched(obj, spec);
+                }
+                else if (prev.Key != key || prev.Spec != spec) // 来源或配置内容变化都要重新应用
                 {
                     intervention.OnActorUnmatched(obj);
-                    matched[obj.GameObjectId] = key;
-                    intervention.OnActorMatched(obj, SpecFor(key, rules, manuals));
+                    matched[obj.GameObjectId] = state;
+                    intervention.OnActorMatched(obj, spec);
                 }
             }
-            else if (matched.TryAdd(obj.GameObjectId, key))
+            else if (matched.TryAdd(obj.GameObjectId, state))
             {
-                intervention.OnActorMatched(obj, SpecFor(key, rules, manuals));
+                intervention.OnActorMatched(obj, spec);
             }
         }
 
@@ -79,8 +90,10 @@ public sealed class ActorScanner : IDisposable
             if (!seen.Contains(kv.Key))
             {
                 var actor = FindByObjectId(kv.Key);
-                if (actor != null)
+                if (actor != null && actor.Address == kv.Value.Address)
                     intervention.OnActorUnmatched(actor);
+                else
+                    intervention.OnActorGone(kv.Key);
                 matched.Remove(kv.Key);
             }
         }
@@ -154,4 +167,6 @@ public sealed class ActorScanner : IDisposable
 
         return null;
     }
+
+    private readonly record struct MatchState(string Key, MatchSpec Spec, nint Address);
 }
